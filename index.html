@@ -2,7 +2,7 @@
 <html lang="km">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>វេនសម្អាតសាលា ជំនាន់3 DPA2</title>
     
     <!-- React & ReactDOM -->
@@ -24,28 +24,38 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // ប្រើប្រាស់ Realtime Database
+        import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
-        // Use system config for stability in this environment
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // --- CUSTOM FIREBASE CONFIGURATION (duccleaner) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAJW7lYgDEr5eqAlJy26ZYoyJWZobJnsU0",
+            authDomain: "duccleaner.firebaseapp.com",
+            projectId: "duccleaner",
+            // *** ចំណុចសំខាន់បំផុត៖ សូមពិនិត្យ URL នេះក្នុង Firebase Console របស់អ្នក ***
+            databaseURL: "https://duccleaner-default-rtdb.asia-southeast1.firebasedatabase.app/", 
+            storageBucket: "duccleaner.firebasestorage.app",
+            messagingSenderId: "166864480178",
+            appId: "1:166864480178:web:9f8aedfdd0135f887fe6ab",
+            measurementId: "G-K2TQHHPJ17"
+        };
 
-        // Expose to window for the React component
-        window.db = db;
-        window.auth = auth;
-        window.appId = appId;
-        window.signInAnonymously = signInAnonymously;
-        window.signInWithCustomToken = signInWithCustomToken;
-        window.onAuthStateChanged = onAuthStateChanged;
-        window.doc = doc;
-        window.setDoc = setDoc;
-        window.onSnapshot = onSnapshot;
-        window.collection = collection;
-        window.initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // Initialize Firebase
+        try {
+            const app = initializeApp(firebaseConfig);
+            const db = getDatabase(app);
+
+            // Expose to window for the React component
+            window.db = db;
+            window.rdbRef = ref;
+            window.rdbSet = set;
+            window.rdbUpdate = update;
+            window.rdbOnValue = onValue;
+            console.log("Firebase initialized with URL:", firebaseConfig.databaseURL);
+        } catch (err) {
+            console.error("Firebase Init Error:", err);
+            alert("កំហុសការភ្ជាប់ Firebase: " + err.message);
+        }
     </script>
 
     <!-- Google Fonts -->
@@ -66,9 +76,13 @@
             body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .no-print { display: none !important; }
         }
+        
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
     </style>
 </head>
-<body class="bg-slate-50">
+<body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -205,7 +219,7 @@
             const [selectedWeek, setSelectedWeek] = useState(1);
             
             // Firebase State
-            const [user, setUser] = useState(null);
+            // No User State anymore
             const [attendanceData, setAttendanceData] = useState({});
             const [attendanceReasons, setAttendanceReasons] = useState({});
 
@@ -225,71 +239,53 @@
             const ITEMS_PER_PAGE_FIRST = 25; 
             const ITEMS_PER_PAGE_OTHERS = 32; 
 
-            // --- Firebase Auth & Sync ---
+            // Realtime Sync from Realtime Database (rdbOnValue)
             useEffect(() => {
-                // Initialize Auth
-                const initAuth = async () => {
-                    if (window.auth) {
-                        if (window.initialAuthToken) {
-                            await window.signInWithCustomToken(window.auth, window.initialAuthToken);
-                        } else {
-                            await window.signInAnonymously(window.auth);
-                        }
-                    }
-                };
-                initAuth();
+                if (!window.db || !window.rdbOnValue) return;
 
-                // Listen for Auth State
-                if (window.auth) {
-                    const unsubscribe = window.onAuthStateChanged(window.auth, (u) => {
-                        setUser(u);
-                    });
-                    return () => unsubscribe();
-                }
-            }, []);
-
-            // Realtime Sync from Firestore
-            useEffect(() => {
-                if (!user || !window.db) return;
-
-                // Path: /artifacts/{appId}/public/data/cleaning_roster/main_data
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'cleaning_roster', 'main_data');
+                // Path: school_cleaning/roster_data
+                const dbRef = window.rdbRef(window.db, 'school_cleaning/roster_data');
                 
-                const unsubscribe = window.onSnapshot(docRef, (snapshot) => {
-                    if (snapshot.exists()) {
-                        const data = snapshot.data();
+                const unsubscribe = window.rdbOnValue(dbRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
                         setAttendanceData(data.attendance || {});
                         setAttendanceReasons(data.reasons || {});
                     } else {
-                        // Doc doesn't exist yet, we can initialize or just wait for write
+                        // Data doesn't exist yet, that's fine
+                        setAttendanceData({});
+                        setAttendanceReasons({});
                     }
                 }, (error) => {
                     console.error("Firebase Sync Error:", error);
-                    showNotification("មានបញ្ហាក្នុងការទាញយកទិន្នន័យ", "error");
+                    showNotification("មានបញ្ហាក្នុងការទាញយកទិន្នន័យ (សូមពិនិត្យ URL ឬ Rules)", "error");
                 });
 
-                return () => unsubscribe();
-            }, [user]);
+                return () => unsubscribe(); 
+            }, []);
 
             // Save Helpers
             const saveAttendance = async (newAttendance) => {
-                if (!user || !window.db) return;
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'cleaning_roster', 'main_data');
+                if (!window.db) {
+                    showNotification("មិនមានការភ្ជាប់ទៅ Database ទេ", "error");
+                    return;
+                }
                 try {
-                    await window.setDoc(docRef, { attendance: newAttendance }, { merge: true });
+                    await window.rdbUpdate(window.rdbRef(window.db, 'school_cleaning/roster_data'), { attendance: newAttendance });
                 } catch (e) {
                     console.error("Save Error:", e);
-                    showNotification("បរាជ័យក្នុងការរក្សាទុក", "error");
+                    // Show specific error to help debug
+                    showNotification("បរាជ័យ៖ " + (e.message || "មិនស្គាល់មូលហេតុ"), "error");
                 }
             };
 
             const saveReasons = async (newReasons) => {
-                if (!user || !window.db) return;
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'cleaning_roster', 'main_data');
+                if (!window.db) return;
                 try {
-                    await window.setDoc(docRef, { reasons: newReasons }, { merge: true });
+                    await window.rdbUpdate(window.rdbRef(window.db, 'school_cleaning/roster_data'), { reasons: newReasons });
                 } catch (e) {
                     console.error("Save Error:", e);
+                    showNotification("បរាជ័យក្នុងការរក្សាទុកមូលហេតុ៖ " + e.message, "error");
                 }
             };
 
@@ -311,12 +307,18 @@
 
             const toggleStatus = (studentId, status) => {
                 setAttendanceData(prev => {
+                    const currentWeekData = { ...(prev[currentKey] || {}) };
+                    
+                    // FIX: If status is 'none' (double click), set to null to delete from Firebase
+                    if (status === 'none') {
+                        currentWeekData[studentId] = null;
+                    } else {
+                        currentWeekData[studentId] = status;
+                    }
+
                     const newData = {
                         ...prev,
-                        [currentKey]: {
-                            ...(prev[currentKey] || {}),
-                            [studentId]: status
-                        }
+                        [currentKey]: currentWeekData
                     };
                     saveAttendance(newData); // Save to Firebase
                     return newData;
@@ -692,7 +694,7 @@
                     const reason = getReason(s.id);
                     report += `- ${s.name}${reason ? ` (${reason})` : ''}\n`;
                 });
-                report += `- ${s.name}\n`;
+                report += `\n`;
                 }
 
                 try {
